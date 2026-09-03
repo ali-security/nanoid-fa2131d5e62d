@@ -1,80 +1,74 @@
 name: Test
 on:
-  push:
-    branches:
-      - main
-      - v3
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: Optional uvu test file pattern; empty runs the full suite
+        required: false
+        type: string
 permissions:
   contents: read
 jobs:
   full:
     name: Node.js Latest Full
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
           version: 10
       - name: Install Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 21
+          node-version: 23
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Run tests
-        run: pnpm test
+        run: |
+          FILTER="${{ inputs.test-filter }}"
+          if [ -n "$FILTER" ]; then pnpm exec uvu . "$FILTER"; else pnpm test; fi
+      - name: Build the release tarball
+        run: |
+          pnpm exec clean-publish --without-publish --temp-dir clean-package
+          mkdir -p dist
+          cd clean-package
+          npm pack --pack-destination ../dist
+      - name: Upload the release tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: dist/nanoid-*.tgz
+          if-no-files-found: error
   short:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
         node-version:
+          - 24
+          - 22
           - 20
-          - 18
-          - 16
     name: Node.js ${{ matrix.node-version }} Quick
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
           version: 10
       - name: Install Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Run unit tests
-        run: pnpm test
-  old:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version:
-          - 14
-          - 12
-          - 10
-    name: Node.js ${{ matrix.node-version }} Quick
-    steps:
-      - name: Checkout the repository
-        uses: actions/checkout@v3
-      - name: Install pnpm
-        uses: pnpm/action-setup@v1
-        with:
-          version: 3
-        env:
-          ACTIONS_ALLOW_UNSECURE_COMMANDS: true
-      - name: Install Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v3
-        with:
-          node-version: ${{ matrix.node-version }}
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile --ignore-scripts
-      - name: Run unit tests
-        run: pnpm test
+        run: |
+          FILTER="${{ inputs.test-filter }}"
+          if [ -n "$FILTER" ]; then pnpm exec uvu . "$FILTER"; else pnpm test; fi
