@@ -120,6 +120,13 @@ for (let type of ['node', 'browser']) {
     is(nanoidA(10), 'aaaaaaaaaa')
   })
 
+  test(`${type} / customAlphabet / is ready for 0 and negative size`, () => {
+    is(customAlphabet('abc')(0), '')
+    is(customAlphabet('abc', 0)(), '')
+    is(customAlphabet('abc')(-1), '')
+    is(customAlphabet('abc', 5)(-1), '')
+  })
+
   test(`${type} / customRandom / supports generator`, () => {
     let sequence = [2, 255, 3, 7, 7, 7, 7, 7, 0, 1]
     function fakeRandom(size) {
@@ -133,6 +140,11 @@ for (let type of ['node', 'browser']) {
     let nanoid18 = customRandom('abcde', 18, fakeRandom)
     is(nanoid4(), 'adca')
     is(nanoid18(), 'cbadcbadcbadcbadcc')
+  })
+
+  test(`${type} / customRandom / is ready for 0 size`, () => {
+    let nanoid0 = customRandom('abc', 5, size => new Uint8Array(size))
+    is(nanoid0(0), '')
   })
 
   test(`${type} / urlAlphabet / is string`, () => {
@@ -197,6 +209,25 @@ for (let type of ['node', 'browser']) {
       is.not(ID1, ID2)
     })
   }
+}
+
+// The CommonJS builds are the `require` entry points and carry their own copy
+// of the generator loop, so they need the same 0 and negative size coverage.
+for (let type of ['node', 'browser']) {
+  let { customAlphabet, customRandom } =
+    type === 'node' ? require('../index.cjs') : require('../index.browser.cjs')
+
+  test(`${type} cjs / customAlphabet / is ready for 0 and negative size`, () => {
+    is(customAlphabet('abc')(0), '')
+    is(customAlphabet('abc', 0)(), '')
+    is(customAlphabet('abc')(-1), '')
+    is(customAlphabet('abc', 5)(-1), '')
+  })
+
+  test(`${type} cjs / customRandom / is ready for 0 size`, () => {
+    let nanoid0 = customRandom('abc', 5, size => new Uint8Array(size))
+    is(nanoid0(0), '')
+  })
 }
 
 test.run()

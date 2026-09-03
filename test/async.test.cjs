@@ -1,6 +1,9 @@
 let { suite } = require('uvu')
 let { spy } = require('nanospy')
 let { is, match, ok, not } = require('uvu/assert')
+let { readFileSync } = require('fs')
+let { pathToFileURL } = require('url')
+let { join } = require('path')
 let crypto = require('crypto')
 
 global.crypto = {
@@ -183,6 +186,13 @@ for (let type of ['node', 'browser']) {
     ok(max - min <= 0.05)
   })
 
+  customAlphabetSuite('is ready for 0 and negative size', async () => {
+    is(await customAlphabet('abc')(0), '')
+    is(await customAlphabet('abc', 0)(), '')
+    is(await customAlphabet('abc')(-1), '')
+    is(await customAlphabet('abc', -5)(), '')
+  })
+
   customAlphabetSuite('changes size', async () => {
     let nanoidA = customAlphabet('a')
     let id = await nanoidA(10)
@@ -206,3 +216,56 @@ for (let type of ['node', 'browser']) {
 
   customAlphabetSuite.run()
 }
+
+// The CommonJS builds are the `require` entry points and carry their own copy
+// of the generator loop, so they need the same 0 and negative size coverage.
+for (let type of ['node', 'browser']) {
+  let { customAlphabet } =
+    type === 'node'
+      ? require('../async/index.cjs')
+      : require('../async/index.browser.cjs')
+
+  let cjsSuite = suite(`${type} cjs / customAlphabet`)
+
+  cjsSuite('is ready for 0 and negative size', async () => {
+    is(await customAlphabet('abc')(0), '')
+    is(await customAlphabet('abc', 0)(), '')
+    is(await customAlphabet('abc')(-1), '')
+    is(await customAlphabet('abc', -5)(), '')
+  })
+
+  cjsSuite.run()
+}
+
+// `async/index.native.js` is the React Native build. It imports `expo-random`,
+// which is not installed here, so load it with that import stubbed out to give
+// its copy of the generator the same 0 and negative size coverage.
+function loadNative() {
+  let path = join(__dirname, '..', 'async', 'index.native.js')
+  let source = readFileSync(path, 'utf8')
+    .replace(
+      "import { getRandomBytesAsync } from 'expo-random'",
+      'let getRandomBytesAsync = async bytes => new Uint8Array(bytes)'
+    )
+    .replace(
+      "'../url-alphabet/index.js'",
+      JSON.stringify(
+        pathToFileURL(join(__dirname, '..', 'url-alphabet', 'index.js')).href
+      )
+    )
+  return import(
+    'data:text/javascript;base64,' + Buffer.from(source).toString('base64')
+  )
+}
+
+let nativeSuite = suite('native / customAlphabet')
+
+nativeSuite('is ready for 0 and negative size', async () => {
+  let { customAlphabet } = await loadNative()
+  is(await customAlphabet('abc')(0), '')
+  is(await customAlphabet('abc', 0)(), '')
+  is(await customAlphabet('abc')(-1), '')
+  is(await customAlphabet('abc', -5)(), '')
+})
+
+nativeSuite.run()
