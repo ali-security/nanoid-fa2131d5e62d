@@ -1,5 +1,5 @@
 let { test } = require('uvu')
-let { is, ok, equal, match, not } = require('uvu/assert')
+let { is, ok, equal, match, not, throws } = require('uvu/assert')
 
 let browser = require('../index.browser.js')
 let node = require('../index.js')
@@ -165,8 +165,8 @@ for (let type of ['node', 'browser']) {
 
   test(`${type} / random / generates random buffers`, () => {
     let numbers = {}
-    let bytes = random(10000)
-    is(bytes.length, 10000)
+    let bytes = random(1000)
+    is(bytes.length, 1000)
     for (let byte of bytes) {
       if (!numbers[byte]) numbers[byte] = 0
       numbers[byte] += 1
@@ -175,6 +175,56 @@ for (let type of ['node', 'browser']) {
       ok(byte >= 0)
     }
   })
+
+  if (type === 'node') {
+    test(`${type} / nanoid / throws on negative or too big ID size`, () => {
+      // `size |= 0` maps 2**31 to a negative int32; the fillPool guard rejects it
+      // instead of corrupting the pool (CVE-2026-73086).
+      throws(() => nanoid(2147483648), /Wrong ID size/)
+      throws(() => nanoid(-10), /Wrong ID size/)
+      throws(() => nanoid(1025), /Wrong ID size/)
+      // the pool is intact: legitimate calls still produce unique, valid IDs
+      let a = nanoid()
+      let b = nanoid()
+      not.equal(a, b)
+      is(a.length, 21)
+    })
+
+    test(`${type} / nanoid / keeps the pool usable after an oversized size`, () => {
+      // The CVE-2026-73086 PoC: unguarded, `nanoid(2**31)` drives `poolOffset`
+      // to ~-2.1e9, so every later ID reads `pool[negative]`, and
+      // `undefined & 63` picks `urlAlphabet[0]` for all 21 characters. Every ID
+      // in the process then degrades to the constant below.
+      // A live pool is the precondition: it makes the unguarded call slip past
+      // both refresh checks instead of failing inside `Buffer.allocUnsafe()`.
+      is(nanoid().length, 21)
+      try {
+        nanoid(2147483648)
+      } catch (e) {}
+      let ids = new Set()
+      for (let i = 0; i < 10; i++) {
+        let id = nanoid()
+        is.not(id, 'uuuuuuuuuuuuuuuuuuuuu')
+        is(id.length, 21)
+        ids.add(id)
+      }
+      is(ids.size, 10)
+    })
+
+    test(`${type} / random / throws on negative or too big size`, () => {
+      // `random()` shares the very same pool and has no `size <= 0`
+      // short-circuit, so the guard is the only thing keeping `poolOffset`
+      // from moving backwards and replaying already-issued bytes.
+      throws(() => random(2147483648), /Wrong ID size/)
+      throws(() => random(-10), /Wrong ID size/)
+      throws(() => random(1025), /Wrong ID size/)
+      // the pool is intact: consecutive reads advance instead of repeating
+      let first = [...random(21)].join(',')
+      let second = [...random(21)].join(',')
+      is(first.split(',').length, 21)
+      is.not(first, second)
+    })
+  }
 
   if (type === 'node') {
     test(`${type} / proxy number / prevent collision`, () => {
@@ -214,7 +264,7 @@ for (let type of ['node', 'browser']) {
 // The CommonJS builds are the `require` entry points and carry their own copy
 // of the generator loop, so they need the same 0 and negative size coverage.
 for (let type of ['node', 'browser']) {
-  let { customAlphabet, customRandom } =
+  let { customAlphabet, customRandom, nanoid, random } =
     type === 'node' ? require('../index.cjs') : require('../index.browser.cjs')
 
   test(`${type} cjs / customAlphabet / is ready for 0 and negative size`, () => {
@@ -228,6 +278,54 @@ for (let type of ['node', 'browser']) {
     let nanoid0 = customRandom('abc', 5, size => new Uint8Array(size))
     is(nanoid0(0), '')
   })
+
+  if (type === 'node') {
+    // `index.cjs` keeps its own `pool`/`poolOffset` pair, so a guard added only
+    // to `index.js` would leave every `require('nanoid')` consumer exploitable.
+    test(`${type} cjs / nanoid / throws on negative or too big ID size`, () => {
+      throws(() => nanoid(2147483648), /Wrong ID size/)
+      throws(() => nanoid(-10), /Wrong ID size/)
+      throws(() => nanoid(1025), /Wrong ID size/)
+      let a = nanoid()
+      let b = nanoid()
+      not.equal(a, b)
+      is(a.length, 21)
+    })
+
+    test(`${type} cjs / nanoid / keeps the pool usable after an oversized size`, () => {
+      // Prime the pool first — see the ESM twin above for why that matters.
+      is(nanoid().length, 21)
+      try {
+        nanoid(2147483648)
+      } catch (e) {}
+      let ids = new Set()
+      for (let i = 0; i < 10; i++) {
+        let id = nanoid()
+        is.not(id, 'uuuuuuuuuuuuuuuuuuuuu')
+        is(id.length, 21)
+        ids.add(id)
+      }
+      is(ids.size, 10)
+    })
+
+    test(`${type} cjs / random / throws on negative or too big size`, () => {
+      throws(() => random(2147483648), /Wrong ID size/)
+      throws(() => random(-10), /Wrong ID size/)
+      throws(() => random(1025), /Wrong ID size/)
+      is(random(21).length, 21)
+    })
+
+    test(`${type} cjs / random / keeps the pool advancing after a negative size`, () => {
+      // A negative `random()` size walks `poolOffset` backwards, which makes the
+      // next reads replay bytes that were already handed out (ID collisions).
+      let before = [...random(21)].join(',')
+      try {
+        random(-21)
+      } catch (e) {}
+      let after = [...random(21)].join(',')
+      is.not(before, after)
+    })
+  }
 }
 
 test.run()
